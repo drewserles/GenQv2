@@ -25,6 +25,9 @@ def arg_parse():
     parser.add_argument('-tgt_seq_len', type=int, default=25, help="Max source sequence length")
     parser.add_argument('-trn_fract', type=float, default=0.9, help="Fraction of data split for training")
     parser.add_argument('-batch_size', type=int, default=64, help="Batch size")
+
+    # Model parameters
+    parser.add_argument('-bidir', type=bool, default=False, help="First layer of encoder is bidrectional")
     
     return parser.parse_args()
 
