@@ -45,7 +45,12 @@ class Preprocess():
 
 
 if __name__ == "__main__":
+    print("Beginning data processing. This will take several minutes.")
     preproc = Preprocess()
+    print("Loading raw data")
     preproc.load_data()
+    print("Tokenizing data")
     preproc.tokenize()
+    print("Loading pretrained word embeddings")
     preproc.word_emb()
+    print(f'Preprocess complete. Source, target, and word embedding pickle files saved here: {preproc.options.save}')
