@@ -40,7 +40,7 @@ def load_trim(opt):
     tgt_tok_trim = np.array(tgt_tok)[keep_src]
 
     # Same with target sequence length
-    keep_tgt = np.array([len(s) < tgt_seq_len for s in tgt_tok_trim])
+    keep_tgt = np.array([len(s) < opt.tgt_seq_len for s in tgt_tok_trim])
     src_tok_trim = np.array(src_tok_trim)[keep_tgt]
     tgt_tok_trim = np.array(tgt_tok_trim)[keep_tgt]
 
@@ -92,12 +92,12 @@ def build_iter(opt, src_tok, tgt_tok, device):
 
     examples = [data.Example.fromlist([src_tok[i], tgt_tok[i]], fields) for i in range(len(src_tok))]
     dataset = data.Dataset(examples, fields)
-    trn_ds, val_ds = mydataset.split(split_ratio=opt.trn_fract)
+    trn_ds, val_ds = dataset.split(split_ratio=opt.trn_fract)
 
     src_field.build_vocab(trn_ds, max_size=opt.src_vocab_size)
     tgt_field.build_vocab(trn_ds, max_size=opt.tgt_vocab_size)
 
-    trn_dl, val_dl = BucketIterator.splits((trn_ds, val_ds), sort_key=lambda x: len(x.src), \
+    trn_dl, val_dl = data.BucketIterator.splits((trn_ds, val_ds), sort_key=lambda x: len(x.src), \
                                        batch_size=opt.batch_size, device=device)
 
     return src_field, tgt_field, trn_dl, val_dl
@@ -109,6 +109,8 @@ if __name__ == "__main__":
     print(f'Trimmed tokenize check. Length src: {len(src_tok_trim)}, length tgt: {len(tgt_tok_trim)}')
 
     src_field, tgt_field, trn_dl, val_dl = build_iter(options, src_tok_trim, tgt_tok_trim, device)
+    print(f'Src vocab length: {len(src_field.vocab)}, Tgt vocab length: {len(tgt_field.vocab)}')
+    print(f'Train DL length: {len(trn_dl)}, Val DL length: {len(val_dl)}')
 
     # This is the previous method. Using torchtext now
     # src_ids, src_itos, src_stoi = gen_ids(src_tok_trim, options.src_vocab_size)
