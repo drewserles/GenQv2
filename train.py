@@ -1,3 +1,5 @@
+# Python packages
+import time
 import argparse
 import pickle
 import numpy as np
@@ -7,6 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchtext import data
+# My packages
+import modelbuilder
 
 # Parse command line options.
 def arg_parse():
@@ -28,6 +32,14 @@ def arg_parse():
 
     # Model parameters
     parser.add_argument('-bidir', type=bool, default=False, help="First layer of encoder is bidrectional")
+    parser.add_argument('-num_hid', type=int, default=600, help="Number of hidden units in the encoder and decoder")
+    parser.add_argument('-num_layers', type=int, default=2, help="Needs to be at least 2 if including dropout in LSTM")
+    parser.add_argument('-cell_drop', type=float, default=0.3, help="Dropout between memory cell (LSTM) stacks")
+    parser.add_argument('-emb_drop', type=float, default=0, help="Embedding layer dropout")
+    parser.add_argument('-fc_drop', type=float, default=0.3, help="Finally fully connected layer dropout")
+
+    # Training parameters
+    parser.add_argument('-lr', type=float, default=0.001, help="Learning rate")
     
     return parser.parse_args()
 
@@ -105,15 +117,59 @@ def build_iter(opt, src_tok, tgt_tok, device):
 
     return src_field, tgt_field, trn_dl, val_dl
 
+
+
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    options = arg_parse()
-    src_tok_trim, tgt_tok_trim = load_trim(options)
+    opt = arg_parse()
+
+    # Load data and remove sequences longer than limits
+    src_tok_trim, tgt_tok_trim = load_trim(opt)
     print(f'Trimmed tokenize check. Length src: {len(src_tok_trim)}, length tgt: {len(tgt_tok_trim)}')
 
-    src_field, tgt_field, trn_dl, val_dl = build_iter(options, src_tok_trim, tgt_tok_trim, device)
+    # GLoVE pretrained word embeddings
+    glove = pickle.load(open(opt.glove,'rb'))
+    EMB_DIM = len(glove['the'])
+
+    # Create source field objects (contain vocab) and iterators
+    src_field, tgt_field, trn_dl, val_dl = build_iter(opt, src_tok_trim, tgt_tok_trim, device)
     print(f'Src vocab length: {len(src_field.vocab)}, Tgt vocab length: {len(tgt_field.vocab)}')
     print(f'Train DL length: {len(trn_dl)}, Val DL length: {len(val_dl)}')
+
+    # Build the model
+    encoder = modelbuilder.Encoder(glove, src_field.vocab.itos, EMB_DIM, opt.num_hid, \
+                                opt.num_layers, opt.cell_drop, opt.emb_drop, opt.bidir)
+    decoder = modelbuilder.Decoder(glove, tgt_field.vocab.itos, EMB_DIM, opt.num_hid, \
+                                opt.num_layers, opt.cell_drop, opt.emb_drop, opt.fc_drop)
+    model = modelbuilder.Seq2Seq(encoder, decoder)
+
+    opt = torch.optim.Adam(model.parameters(), lr=opt.lr)
+
+    crit = modelbuilder.seq2seq_loss
+
+    # Run in training
+    N_EPOCHS = 25
+    CLIP = 5
+    REPORT_FREQ = 150
+    best_val_loss = float('inf')
+
+    for epoch in range(N_EPOCHS):
+        start = time.time()
+        train_loss = modelbuilder.train(model, trn_dl, opt, crit, CLIP, REPORT_FREQ)
+        valid_loss = modelbuilder.evaluate(model, val_dl, crit)
+        stop = time.time()
+        
+        if valid_loss < best_val_loss:
+            best_val_loss = valid_loss
+            torch.save(model.state_dict(), opt.save + 'Best_Val_Model.pt')
+        
+        print(f'| Epoch: {epoch+1:03} | Train Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f} \
+            | Val. Loss: {valid_loss:.3f} | Val. PPL: {math.exp(valid_loss):7.3f} | Epoch time: {stop - start:.1f} sec')
+
+
+
+
+
 
     # This is the previous method. Using torchtext now
     # src_ids, src_itos, src_stoi = gen_ids(src_tok_trim, options.src_vocab_size)

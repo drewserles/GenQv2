@@ -105,7 +105,7 @@ class Seq2Seq(nn.Module):
         #last hidden state of the encoder is used as the initial hidden state of the decoder
         outputs, hidden, cell = self.encoder(src)
         
-        #first input to the decoder is the <sos> tokens. This is the first row of the target matrix,
+        # First input to the decoder is the <sos> tokens. This is the first row of the target matrix,
         # <sos> was put in there by torchtext.
         input = trg[0,:]
 
@@ -117,3 +117,47 @@ class Seq2Seq(nn.Module):
             input = (trg[t] if teacher_force else top1)
         
         return torch.stack(res) #return outputs - Takes a list of tensors and stacks them into one tensor
+
+# Training function
+def train(model, dataloader, optimizer, criterion, gradclip, report_freq):
+    
+    model.train()
+    epoch_loss = 0
+
+    for i, (src, trg) in enumerate(dataloader):
+
+        optimizer.zero_grad()
+        output = model(src, trg)
+
+        loss = criterion(output, trg)
+
+        loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), gradclip)
+
+        optimizer.step()
+
+        epoch_loss += loss.item()
+        # Reporting
+        if (report_freq > 0) and ((i+1) % report_freq == 0):
+            update_loss = epoch_loss / (i+1)
+            print(f'Iteration: {i+1}, Training loss: {update_loss:.3f}, Training PPL: {math.exp(update_loss):.3f}')
+        
+    return epoch_loss / len(dataloader)
+
+# Evaluation/forward function
+def evaluate(model, dataloader, criterion):
+    
+    model.eval()
+    epoch_loss = 0
+    
+    with torch.no_grad():
+        print("Running evaluation ...")
+        for i, (src, trg) in enumerate(dataloader):
+
+            output = model(src, trg, 0) #turn off teacher forcing when evaluating
+
+            loss = criterion(output, trg)
+            epoch_loss += loss.item()
+            
+    return epoch_loss / len(dataloader)
