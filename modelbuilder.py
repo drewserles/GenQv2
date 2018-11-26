@@ -124,7 +124,10 @@ def train(model, dataloader, optimizer, criterion, gradclip, report_freq):
     model.train()
     epoch_loss = 0
 
-    for i, (src, trg) in enumerate(dataloader):
+    for i, batch in enumerate(dataloader):
+
+        src = batch.src
+        tgt = batch.tgt
 
         optimizer.zero_grad()
         output = model(src, trg)
@@ -153,11 +156,14 @@ def evaluate(model, dataloader, criterion):
     
     with torch.no_grad():
         print("Running evaluation ...")
-        for i, (src, trg) in enumerate(dataloader):
+        for i, batch in enumerate(dataloader):
 
-            output = model(src, trg, 0) #turn off teacher forcing when evaluating
+            src = batch.src
+            tgt = batch.tgt
 
-            loss = criterion(output, trg)
+            output = model(src, tgt, 0) #turn off teacher forcing when evaluating
+
+            loss = criterion(output, tgt)
             epoch_loss += loss.item()
             
     return epoch_loss / len(dataloader)
