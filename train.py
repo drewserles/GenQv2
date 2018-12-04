@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchtext import data
 # My packages
 import modelbuilder
+import trainer
 
 # Parse command line options.
 def arg_parse():
@@ -61,43 +62,6 @@ def load_trim(opt):
 
     return src_tok_trim, tgt_tok_trim
 
-# Create a list 'itos' where each items is a word in the vocab and its index is the numerical representation
-# Also create a dictionary stoi that converts from a string to its integer value. key:value
-# Finally, convert the tokenized data to be integers rather than strings so they can be fed into the model.
-# def gen_ids(tok, vocab_size):
-#     freq = collections.Counter(p for o in tok for p in o)
-#     itos = [o for o,c in freq.most_common(vocab_size)]
-#     itos.insert(0, '_ph_')
-#     itos.insert(1, '_pad_')
-#     itos.insert(2, '_bos_')
-#     itos.insert(3, '_eos_')
-#     itos.insert(4, '_unk_')
-#     stoi = collections.defaultdict(lambda: 4, {v:k for k,v in enumerate(itos)})
-#     ids = np.array([([2] + [stoi[o] for o in p] + [3]) for p in tok])
-
-#     return ids, itos, stoi
-
-# # Randomly split up the input and target data into training and validation sets.
-# # Return 4 numpy arrays - training input, training targets, val input, and val targets
-# def train_val_split(inp_data, out_data, train_fraction):
-#     trn_idx = np.random.rand(len(inp_data)) < train_fraction
-    
-#     inp_trn = inp_data[trn_idx]
-#     inp_test = inp_data[~trn_idx]
-    
-#     outp_val = out_data[trn_idx]
-#     outp_val = out_data[~trn_idx]
-#     return inp_trn, outp_trn, inp_val, outp_val
-    
-# # Build dataset - extension of PyTorch dataset class
-# class Seq2SeqDataset(Dataset):
-#     def __init__(self, x, y):
-#         self.x = x
-#         self.y = y
-#     def __getitem__(self, idx):
-#         return [np.array(self.x[idx]), np.array(self.y[idx])]
-#     def __len__(self):
-#         return len(self.x)
 
 # Build up the iterator to use with model, the vocab, and the fields
 def build_iter(opt, src_tok, tgt_tok, device):
@@ -112,7 +76,7 @@ def build_iter(opt, src_tok, tgt_tok, device):
     src_field.build_vocab(trn_ds, max_size=opt.src_vocab_size)
     tgt_field.build_vocab(trn_ds, max_size=opt.tgt_vocab_size)
 
-    trn_dl, val_dl = data.BucketIterator.splits((trn_ds, val_ds), sort_key=lambda x: len(x.src), \
+    trn_dl, val_dl = data.BucketIterator.splits((trn_ds, val_ds), sort=True, sort_key=lambda x: len(x.src), \
                                        batch_size=opt.batch_size, device=device)
 
     return src_field, tgt_field, trn_dl, val_dl
@@ -138,33 +102,37 @@ if __name__ == "__main__":
 
     # Build the model
     encoder = modelbuilder.Encoder(glove, src_field.vocab.itos, EMB_DIM, opt.num_hid, \
-                                opt.num_layers, opt.cell_drop, opt.emb_drop, opt.bidir)
+                                opt.num_layers, opt.cell_drop, opt.bidir)
     decoder = modelbuilder.Decoder(glove, tgt_field.vocab.itos, EMB_DIM, opt.num_hid, \
-                                opt.num_layers, opt.cell_drop, opt.emb_drop, opt.fc_drop)
-    model = modelbuilder.Seq2Seq(encoder, decoder)
+                                opt.num_layers, opt.cell_drop)
+    model = modelbuilder.Seq2Seq(encoder, decoder, opt.fc_drop)
 
-    opt = torch.optim.Adam(model.parameters(), lr=opt.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
 
-    crit = modelbuilder.seq2seq_loss
+    compute = trainer.LossCompute(model.generator, tgt_field.vocab)
 
     # Run in training
-    N_EPOCHS = 25
     CLIP = 5
-    REPORT_FREQ = 150
+    TRAIN_STEPS = 15000         # len(trn_dl)=1120, so 1120 steps(batches) per epoch
+    VAL_FREQ = 1100
+    PRINT_FREQ = 500
     best_val_loss = float('inf')
 
-    for epoch in range(N_EPOCHS):
-        start = time.time()
-        train_loss = modelbuilder.train(model, trn_dl, opt, crit, CLIP, REPORT_FREQ)
-        valid_loss = modelbuilder.evaluate(model, val_dl, crit)
-        stop = time.time()
+    trainer = trainer.Trainer(model, compute, optimizer, CLIP)
+    trainer.train(trn_dl, val_dl, TRAIN_STEPS, PRINT_FREQ, VAL_STEPS)
+
+    # for epoch in range(N_EPOCHS):
+    #     start = time.time()
+    #     train_loss = modelbuilder.train(model, trn_dl, optimizer, crit, CLIP, REPORT_FREQ)
+    #     valid_loss = modelbuilder.evaluate(model, val_dl, crit)
+    #     stop = time.time()
         
-        if valid_loss < best_val_loss:
-            best_val_loss = valid_loss
-            torch.save(model.state_dict(), opt.save + 'Best_Val_Model.pt')
+    #     if valid_loss < best_val_loss:
+    #         best_val_loss = valid_loss
+    #         torch.save(model.state_dict(), opt.save + 'Best_Val_Model.pt')
         
-        print(f'| Epoch: {epoch+1:03} | Train Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f} \
-            | Val. Loss: {valid_loss:.3f} | Val. PPL: {math.exp(valid_loss):7.3f} | Epoch time: {stop - start:.1f} sec')
+    #     print(f'| Epoch: {epoch+1:03} | Train Loss: {train_loss:.3f} | Train PPL: {math.exp(train_loss):7.3f} \
+    #         | Val. Loss: {valid_loss:.3f} | Val. PPL: {math.exp(valid_loss):7.3f} | Epoch time: {stop - start:.1f} sec')
 
 
 

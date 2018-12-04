@@ -14,7 +14,6 @@ def create_emb(pretrained_vecs, itos, emb_sz):
     # Creates a randomly initialized embedding matrix of vocab size x embedding dimension
     emb = nn.Embedding(len(itos), emb_sz, padding_idx=1)
     wgts = emb.weight.data
-    miss = []
     for i,w in enumerate(itos):
         # For each word in vocab, if it exists in the pretrained vocab (wiki/glove/word2vec etc), then replace
         # its index in the embedding weight matrix.
@@ -24,7 +23,7 @@ def create_emb(pretrained_vecs, itos, emb_sz):
 
 # Encoder Class
 class Encoder(nn.Module):
-    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout, emb_dropout, bidir):
+    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout, bidir=False):
         super().__init__()
         
         self.emb_dim = emb_dim
@@ -33,13 +32,12 @@ class Encoder(nn.Module):
         self.bidir = bidir
         
         self.embedding = create_emb(pretrained_vecs, itos, emb_dim)
-        
-        self.emb_dropout = nn.Dropout(emb_dropout)
-        
-        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=lstm_dropout, bidirectional=bidir)
+        self.embedding.weight.requires_grad = False
+                
+        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=lstm_dropout)
                 
     def forward(self, src):
-        embedded = self.emb_dropout(self.embedding(src))
+        embedded = self.embedding(src)
         outputs, (hidden, cell) = self.rnn(embedded)
         # Need to do some resizing here from bidirectional encoder
         # See https://github.com/pytorch/pytorch/issues/3587 for details on stacked return from LSTM
@@ -55,7 +53,7 @@ class Encoder(nn.Module):
 
 # Decoder Class
 class Decoder(nn.Module):
-    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout, emb_dropout, fc_dropout):
+    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout):
         super().__init__()
 
         self.emb_dim = emb_dim
@@ -64,106 +62,112 @@ class Decoder(nn.Module):
         self.n_layers = n_layers
         
         self.embedding = create_emb(pretrained_vecs, itos, emb_dim)
-    
-        self.emb_dropout = nn.Dropout(emb_dropout)
+        self.embedding.weight.requires_grad = False
         
         self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=lstm_dropout)
-        
-        self.out = nn.Linear(hid_dim, self.output_dim)
-        
-        self.fc_dropout = nn.Dropout(fc_dropout)
         
     def forward(self, input, hidden, cell):
         
         input = input.unsqueeze(0)
         
-        embedded = self.emb_dropout(self.embedding(input))
+        embedded = self.embedding(input)
                 
         output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
         
         output = output.squeeze(0)
-        output = self.fc_dropout(output)
-        prediction = self.out(output)
         
-        return prediction, hidden, cell
+        return output, hidden, cell
+
+# Calculates all the context stuff. Returns a tensor that is the same size as what came out of the decoder
+# Meaning it can be passed in directly to the generator. Very good.
+class Attention(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        # Linear input layer with no Bias
+        self.linear_in = nn.Linear(dim, dim, bias=False)
+        # Linear output layer
+        self.linear_out = nn.Linear(dim * 2, dim, bias=False)
+        
+    def score(self, h_t, h_s):
+        src_batch, src_len, src_dim = h_s.size()
+        tgt_batch, tgt_len, tgt_dim = h_t.size()
+        
+        h_t_ = h_t.view(tgt_batch * tgt_len, tgt_dim)
+        h_t_ = self.linear_in(h_t_)
+        h_t = h_t_.view(tgt_batch, tgt_len, tgt_dim)
+        h_s_ = h_s.transpose(1, 2)
+        # (batch, t_len, d) x (batch, d, s_len) --> (batch, t_len, s_len)
+        return torch.bmm(h_t, h_s_)
+        
+    
+    def forward(self, dec_out, enc_out):
+        # dec_out - [batch_size x tgt_len x hidden_dim]
+        # enc_out - [batch_size x src_len x hidden_dim]
+        batch, source_l, dim = enc_out.size()
+        _, target_l, _ = dec_out.size()
+        
+        align = self.score(dec_out, enc_out)
+        align_vectors = F.softmax(align.view(batch*target_l, source_l), -1)
+        align_vectors = align_vectors.view(batch, target_l, source_l)
+        
+        # each context vector c_t is the weighted average
+        # over all the source hidden states
+        c = torch.bmm(align_vectors, enc_out)
+        
+        # concatenate
+        concat_c = torch.cat([c, dec_out], 2).view(batch*target_l, dim*2)
+        attn_h = self.linear_out(concat_c).view(batch, target_l, dim)
+        attn_h = torch.tanh(attn_h)
+        
+        attn_h = attn_h.transpose(0, 1).contiguous()
+        align_vectors = align_vectors.transpose(0, 1).contiguous()
+        
+        return attn_h, align_vectors
 
 # Seq2seq model class
 class Seq2Seq(nn.Module):
-    def __init__(self, encoder, decoder):
+    def __init__(self, encoder, decoder, num_hidden, tgt_vocab_size, final_dropout):
         super().__init__()
-        
         self.encoder = encoder
         self.decoder = decoder
+        # Add the generator object later.
+        self.generator = nn.Sequential(
+                            nn.Linear(num_hidden, tgt_vocab_size),
+                            nn.LogSoftmax(dim=-1)
+                            )
+        # Attention
+        self.attention = Attention(num_hidden)
         
-    def forward(self, src, trg, teacher_forcing_ratio=0.5):
+        # Final dropout layer
+        self.final_dropout = nn.Dropout(final_dropout)
         
-        batch_size = trg.shape[1]
-        max_len = trg.shape[0]
+    def forward(self, src, tgt, teacher_forcing_ratio=0.5):
+        
+        batch_size = tgt.shape[1]
+        max_len = tgt.shape[0]
 
         res = []
         
         #last hidden state of the encoder is used as the initial hidden state of the decoder
-        outputs, hidden, cell = self.encoder(src)
-        
-        # First input to the decoder is the <sos> tokens. This is the first row of the target matrix,
+        enc_outputs, hidden, cell = self.encoder(src)
+
+        #first input to the decoder is the <sos> tokens. This is the first row of the target matrix,
         # <sos> was put in there by torchtext.
-        input = trg[0,:]
+        input = tgt[0,:]
 
         for t in range(1, max_len):
             output, hidden, cell = self.decoder(input, hidden, cell)
             res.append(output) #outputs[t] = output
-            teacher_force = random.random() < teacher_forcing_ratio
-            top1 = output.max(1)[1]
-            input = (trg[t] if teacher_force else top1)
+            # Teacher forcing
+            if random.random() < teacher_forcing_ratio:  
+                input = tgt[t]
+            else:
+                input = self.generator(output)
+                input = input.max(1)[1]  
         
-        return torch.stack(res) #return outputs - Takes a list of tensors and stacks them into one tensor
-
-# Training function
-def train(model, dataloader, optimizer, criterion, gradclip, report_freq):
-    
-    model.train()
-    epoch_loss = 0
-
-    for i, batch in enumerate(dataloader):
-
-        src = batch.src
-        tgt = batch.tgt
-
-        optimizer.zero_grad()
-        output = model(src, trg)
-
-        loss = criterion(output, trg)
-
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), gradclip)
-
-        optimizer.step()
-
-        epoch_loss += loss.item()
-        # Reporting
-        if (report_freq > 0) and ((i+1) % report_freq == 0):
-            update_loss = epoch_loss / (i+1)
-            print(f'Iteration: {i+1}, Training loss: {update_loss:.3f}, Training PPL: {math.exp(update_loss):.3f}')
-        
-    return epoch_loss / len(dataloader)
-
-# Evaluation/forward function
-def evaluate(model, dataloader, criterion):
-    
-    model.eval()
-    epoch_loss = 0
-    
-    with torch.no_grad():
-        print("Running evaluation ...")
-        for i, batch in enumerate(dataloader):
-
-            src = batch.src
-            tgt = batch.tgt
-
-            output = model(src, tgt, 0) #turn off teacher forcing when evaluating
-
-            loss = criterion(output, tgt)
-            epoch_loss += loss.item()
-            
-    return epoch_loss / len(dataloader)
+        # Have a 
+        dec_outputs = torch.stack(res)
+#         print(f'Output from Dcoder shape: {r.shape}') #(output seq length, batch size, hidden dim)
+        outputs, attns = self.attention(dec_outputs.transpose(0,1).contiguous(), enc_outputs.transpose(0,1))
+        outputs = self.final_dropout(outputs)
+        return outputs #, attns #Don't need to return the attentions yet
