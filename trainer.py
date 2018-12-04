@@ -1,56 +1,6 @@
-import time
+import math
 import torch
 import torch.nn as nn
-
-# Training function
-def train(model, dataloader, optimizer, criterion, gradclip, report_freq):
-    
-    model.train()
-    epoch_loss = 0
-
-    for i, batch in enumerate(dataloader):
-
-        src = batch.src
-        tgt = batch.tgt
-
-        optimizer.zero_grad()
-        output = model(src, tgt)
-
-        loss = criterion(output, tgt)
-
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), gradclip)
-
-        optimizer.step()
-
-        epoch_loss += loss.item()
-        # Reporting
-        if (report_freq > 0) and ((i+1) % report_freq == 0):
-            update_loss = epoch_loss / (i+1)
-            print(f'Iteration: {i+1}, Training loss: {update_loss:.3f}, Training PPL: {math.exp(update_loss):.3f}')
-        
-    return epoch_loss / len(dataloader)
-
-# Evaluation/forward function
-def evaluate(model, dataloader, criterion):
-    
-    model.eval()
-    epoch_loss = 0
-    
-    with torch.no_grad():
-        print("Running evaluation ...")
-        for i, batch in enumerate(dataloader):
-
-            src = batch.src
-            tgt = batch.tgt
-
-            output = model(src, tgt, 0) #turn off teacher forcing when evaluating
-
-            loss = criterion(output, tgt)
-            epoch_loss += loss.item()
-            
-    return epoch_loss / len(dataloader)
 
 # Loss compute object
 class LossCompute():
@@ -88,38 +38,33 @@ class Trainer():
         self.model.train()
         self.gradclip = gradclip
         
-    def train(self, train_dl, valid_dl, train_steps, report_freq, valid_steps):
+    def train(self, train_dl, valid_dl, opt):
         step = 1
-        while step <= train_steps:
+        while step <= opt.train_steps:
             train_loss = 0
             train_words = 0
-            start = time.time()
             for i, batch in enumerate(train_dl):
                 # do the forward pass
                 batch_loss, batch_words = self.train_func(batch)
                 train_loss += batch_loss
                 train_words += batch_words
                 # Report training progress
-                if step % report_freq == 0:
+                if step % opt.print_freq == 0:
                     train_loss /= train_words
-                    print(f'Iteration: {step}, Training loss: {train_loss:.3f}, Training PPL: {math.exp(train_loss):.3f}, Time: {time.time() - start:.3f}')
+                    print(f'Iteration: {step}, Training loss: {train_loss:.3f}, Training PPL: {math.exp(train_loss):.3f}')
                     train_loss = 0
                     train_words = 0
-                    start = time.time()
                     
                 # Run validation
-                if step % valid_steps == 0:
+                if step % opt.val_freq == 0:
                     self.val_func(valid_dl)
                 
                 step += 1
-                if step > train_steps:
-                    break
-            src_field, tgt_field, trn_dl, val_dl = build_iter(src_tok_trim, tgt_tok_trim, device)
-            
+                if step > opt.train_steps:
+                    break            
     
     def train_func(self, batch):
         self.model.zero_grad()
-        # Don't want to include last entry in target here, right? Don't want EOS passed to 
         output = self.model(batch.src, batch.tgt) # Run forward pass up to generator
         loss, words = self.loss_compute.train_compute_loss(output, batch.tgt, batch.batch_size) # Run through generator and compute loss
 
@@ -131,6 +76,7 @@ class Trainer():
         self.model.eval()
         val_loss = 0
         val_words = 0
+        print("Running validation ...")
         with torch.no_grad():
             for i, batch in enumerate(valid_dl):
                 sl,bs = batch.tgt.shape

@@ -7,3 +7,5 @@ parser.add_argument('-bridge', action="store_true",
 
 options = parser.parse_args()
 print(options.bridge)
+options.emb_dim = 90
+print(options.emb_dim)

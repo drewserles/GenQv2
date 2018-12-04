@@ -23,18 +23,18 @@ def create_emb(pretrained_vecs, itos, emb_sz):
 
 # Encoder Class
 class Encoder(nn.Module):
-    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout, bidir=False):
+    def __init__(self, pretrained_vecs, itos, opt):
         super().__init__()
         
-        self.emb_dim = emb_dim
-        self.hid_dim = hid_dim
-        self.n_layers = n_layers
-        self.bidir = bidir
+        self.emb_dim = opt.emb_dim
+        self.hid_dim = opt.num_hid
+        self.n_layers = opt.num_layers
+        self.bidir = opt.bidir
         
-        self.embedding = create_emb(pretrained_vecs, itos, emb_dim)
+        self.embedding = create_emb(pretrained_vecs, itos, self.emb_dim)
         self.embedding.weight.requires_grad = False
                 
-        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=lstm_dropout)
+        self.rnn = nn.LSTM(self.emb_dim, self.hid_dim, self.n_layers, dropout=opt.cell_drop, bidirectional=opt.bidir)
                 
     def forward(self, src):
         embedded = self.embedding(src)
@@ -53,18 +53,18 @@ class Encoder(nn.Module):
 
 # Decoder Class
 class Decoder(nn.Module):
-    def __init__(self, pretrained_vecs, itos, emb_dim, hid_dim, n_layers, lstm_dropout):
+    def __init__(self, pretrained_vecs, itos, opt): #hid_dim, n_layers, lstm_dropout):
         super().__init__()
 
-        self.emb_dim = emb_dim
-        self.hid_dim = hid_dim
+        self.emb_dim = opt.emb_dim
+        self.hid_dim = opt.num_hid
         self.output_dim = len(itos)
-        self.n_layers = n_layers
+        self.n_layers = opt.num_layers
         
-        self.embedding = create_emb(pretrained_vecs, itos, emb_dim)
+        self.embedding = create_emb(pretrained_vecs, itos, self.emb_dim)
         self.embedding.weight.requires_grad = False
         
-        self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout=lstm_dropout)
+        self.rnn = nn.LSTM(self.emb_dim, self.hid_dim, self.n_layers, dropout=opt.cell_drop)
         
     def forward(self, input, hidden, cell):
         
