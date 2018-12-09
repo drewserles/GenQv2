@@ -111,7 +111,6 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr)
     compute = trainer.LossCompute(model.generator, tgt_field.vocab)
 
-    best_val_loss = float('inf')
-
-    trainer = trainer.Trainer(model, compute, optimizer, opt.grad_clip)
+    # Train
+    trainer = trainer.Trainer(model, compute, optimizer, opt)
     trainer.train(trn_dl, val_dl, opt)
