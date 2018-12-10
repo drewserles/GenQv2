@@ -74,7 +74,7 @@ class Trainer():
         self.optim.step() # Model update step
         return loss, words
     
-    def val_func(self, valid_dl, best_val_loss):
+    def val_func(self, valid_dl):
         self.model.eval()
         val_loss = 0
         val_words = 0
@@ -95,5 +95,5 @@ class Trainer():
         # Save model if best seen yet
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
-            torch.save(self.model.state_dict(), f'{self.savepath}Model_Val_{val_loss:.2f}.pt')
+            torch.save(self.model.state_dict(), f'{self.savepath}QGen_Val_PPL_{math.exp(val_loss):.2f}.pt')
         self.model.train()
