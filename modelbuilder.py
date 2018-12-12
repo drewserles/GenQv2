@@ -79,7 +79,7 @@ class Decoder(nn.Module):
         return output, hidden, cell
 
 # Calculates all the context stuff. Returns a tensor that is the same size as what came out of the decoder
-# Meaning it can be passed in directly to the generator. Very good.
+# Meaning it can be passed in directly to the generator.
 class Attention(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -163,7 +163,7 @@ class Seq2Seq(nn.Module):
                 input = tgt[t]
             else:
                 input = self.generator(output)
-                input = input.max(1)[1]  
+                input = input.max(1)[1]
         
         # Have a 
         dec_outputs = torch.stack(res)

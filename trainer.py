@@ -1,6 +1,9 @@
 import math
 import torch
 import torch.nn as nn
+import dill
+import sys
+sys.setrecursionlimit(5000)
 
 # Loss compute object
 class LossCompute():
@@ -95,5 +98,5 @@ class Trainer():
         # Save model if best seen yet
         if val_loss < self.best_val_loss:
             self.best_val_loss = val_loss
-            torch.save(self.model.state_dict(), f'{self.savepath}QGen_Val_PPL_{math.exp(val_loss):.2f}.pt')
+            torch.save(self.model, f'{self.savepath}QGen_Val_PPL_{math.exp(val_loss):.2f}.pt')
         self.model.train()

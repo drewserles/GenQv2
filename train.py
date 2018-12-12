@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchtext import data
+import dill
 # My packages
 import modelbuilder
 import trainer
@@ -98,8 +99,11 @@ if __name__ == "__main__":
     glove = pickle.load(open(opt.glove,'rb'))
     opt.emb_dim = len(glove['the'])
 
-    # Create source field objects (contain vocab) and iterators
+    # Create source field objects (contain vocab) and iterators. Save the fields for future use.
     src_field, tgt_field, trn_dl, val_dl = build_iter(opt, src_tok_trim, tgt_tok_trim, device)
+    field = {'src_field': src_field, 'tgt_field': tgt_field}
+    torch.save(field, f'{opt.save}fields.pt', pickle_module=dill)
+    
     print(f'Src vocab length: {len(src_field.vocab)}, Tgt vocab length: {len(tgt_field.vocab)}')
     print(f'Train DL length: {len(trn_dl)}, Val DL length: {len(val_dl)}')
 
